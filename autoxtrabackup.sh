@@ -4,46 +4,41 @@
 # Copyright (c) 2014 Gregory Storme
 # Version: 0.2
 
-if [ -f /etc/default/autoxtrabackup ] ; then
-        . /etc/default/autoxtrabackup
-else
 
-backupDir=/var/backups/mysql
-hoursBeforeFull=48
-mysqlUser=dbuser
-mysqlPwd=password
+backupDir=/ftp/backup/xtra
+hoursBeforeFull=240
+mysqlUser=root
+mysqlPwd=root
 compression=true
-keepDays=7
+compressThreads=4
+keepDays=11
+keepFullDays=22
 sendEmail=never
 emailAddress=
-fi
 
-#####
-# No editing should be required below this line
-#####
 
+#帮助函数
 usage () {
-        echo -e "\tRestore a full backup";
-        echo -e "\t\tRestore a compressed backup:";
-        echo -e "\t\t\tinnobackupex --decompress $backupDir/BACKUP-DIR";
-        echo -e "\t\t\tFollow same steps as for non-compressed backups";
-        echo -e "\t\tRestore a non-compressed backup:";
-        echo -e "\t\t\tinnobackupex --apply-log $backupDir/BACKUP-DIR";
-        echo -e "\t\t\tStop your MySQL server";
-        echo -e "\t\t\tDelete everything in the MySQL data directory (usually /var/lib/mysql)";
-        echo -e "\t\t\tinnobackupex --copy-back $backupDir/BACKUP-DIR";
-        echo -e "\t\t\tRestore the ownership of the files in the MySQL data directory (chown -R mysql:mysql /var/lib/mysql/)";
-        echo -e "\t\t\tStart your MySQL server";
-        echo -e "\tRestore an incremental backup";
-        echo -e "\t\t\tIf compressed, first decompress the backup (see above)";
-        echo -e "\t\t\tFirst, prepare the base backup";
-        echo -e "\t\t\tinnobackupex --apply-log --redo-only $backupDir/FULL-BACKUP-DIR";
-        echo -e "\t\t\tNow, apply the incremental backup to the base backup.";
-        echo -e "\t\t\tIf you have multiple incrementals, pass the --redo-only when merging all incrementals except for the last one. Also, merge them in the chronological order that the backups were made";
-        echo -e "\t\t\tinnobackupex --apply-log --redo-only $backupDir/FULL-BACKUP-DIR --incremental-dir=$backupDir/INC-BACKUP-DIR";
-        echo -e "\t\t\tOnce you merge the base with all the increments, you can prepare it to roll back the uncommitted transactions:";
-        echo -e "\t\t\tinnobackupex --apply-log $backupDir/BACKUP-DIR";
-        echo -e "\t\t\tFollow the same steps as for a full backup restore now";
+        echo -e "\t 恢复完整备份";
+        echo -e "\t\t 恢复压缩过的备份:";
+        echo -e "\t\t\t innobackupex --decompress $backupDir/BACKUP-DIR";
+        echo -e "\t\t\t 继续执行非压缩备份步骤";
+        echo -e "\t\t 恢复未经压缩过的备份:";
+        echo -e "\t\t\t innobackupex --apply-log $backupDir/BACKUP-DIR";
+        echo -e "\t\t\t 停止MySQL服务";
+        echo -e "\t\t\t 删除所有MySQL数据目录文件";
+        echo -e "\t\t\t innobackupex --copy-back $backupDir/BACKUP-DIR";
+        echo -e "\t\t\t 设置 MySQL 数据目录权限 (chown -R mysql:mysql /var/lib/mysql/)";
+        echo -e "\t\t\t 启动MySQL server";
+        echo -e "\t恢复增量备份";
+        echo -e "\t\t\t 如果是压缩过的备份，需要先解压备份";
+        echo -e "\t\t\t 然后准备备份文件";
+        echo -e "\t\t\t innobackupex --apply-log --redo-only $backupDir/FULL-BACKUP-DIR";
+        echo -e "\t\t\t 从基础包上导入增量包.";
+        echo -e "\t\t\t 如果你有多个增量备份包，请依次准备增量包";
+        echo -e "\t\t\t innobackupex --apply-log --redo-only $backupDir/FULL-BACKUP-DIR --incremental-dir=$backupDir/INC-BACKUP-DIR";
+        echo -e "\t\t\t 将基础与所有增量合并后，准备回滚未提交的事务:";
+        echo -e "\t\t\t innobackupex --apply-log $backupDir/BACKUP-DIR";
 }
 
 while getopts ":h" opt; do
@@ -61,18 +56,18 @@ done
 
 dateNow=`date +%Y-%m-%d_%H-%M-%S`
 dateNowUnix=`date +%s`
-backupLog=/tmp/backuplog
+backupLog=/ftp/backup/xtra/"$dateNow".log
 delDay=`date -d "-$keepDays days" +%Y-%m-%d`
 
 # Check if innobackupex is installed (percona-xtrabackup)
 if [[ -z "$(command -v innobackupex)" ]]; then
-        echo "The innobackupex executable was not found, check if you have installed percona-xtrabackup."
+        echo "备份程序未找到，请检查"
         exit 1
 fi
 
 # Check if backup directory exists
 if [ ! -d "$backupDir" ]; then
-        echo "Backup directory does not exist. Check your config and create the backup directory"
+        echo "备份目录不存在"
         exit 1
 fi
 
@@ -124,34 +119,32 @@ else
 
         # Check if we must take a full or incremental backup
         if [ $difference -lt $hoursBeforeFull ]; then
-                #echo "It's been $difference hours since last full, doing an incremental backup"
+                echo "自上次备份以来已经过去了 $difference 小时, 开始增量备份"
                 lastFullDir=`date -d@"$lastFull" '+%Y-%m-%d_%H-%M-%S'`
                 /usr/bin/innobackupex --user=$mysqlUser --password=$mysqlPwd --no-timestamp $compress $compressThreads --rsync --incremental --incremental-basedir="$backupDir"/"$lastFullDir"_full "$backupDir"/"$dateNow"_incr > $backupLog 2>&1
+                #删除超过时间的增量备份和日志
+                rm -rf $backupDir/$delDay*
         else
-                #echo "It's been $difference hours since last full backup, time for a new full backup"
+                echo "自上次完整备份以来已经过去了 $difference 小时，是时候进行新的完整备份了"
                 echo $dateNowUnix > "$backupDir"/latest_full
                 /usr/bin/innobackupex --user=$mysqlUser --password=$mysqlPwd --no-timestamp $compress $compressThreads --rsync "$backupDir"/"$dateNow"_full > $backupLog 2>&1
+
+                #删除超过时间的备份和日志
+                find $backupDir -type f -ctime "+$keepFullDays" -ok rm {} \;
         fi
 fi
 
 # Check if the backup succeeded or failed, and e-mail the logfile, if enabled
 if grep -q "completed OK" $backupLog; then
-        #echo "Backup completed OK"
+        echo "备份完成"
         if [[ $sendEmail == always ]]; then
                 cat $backupLog | mail -s "AutoXtraBackup log" $emailAddress
         fi
 else
-        #echo "Backup FAILED"
+        echo "备份失败"
         if [[ $sendEmail == always ]] || [[ $sendEmail == onerror ]]; then
                 cat $backupLog | mail -s "AutoXtraBackup log" $emailAddress
         fi
         exit 1
 fi
 
-# Delete backups older than retention date
-rm -rf $backupDir/$delDay*
-
-# Delete incremental backups with full backup base directory that was deleted
-for i in `find "$backupDir"/*incr -type f -iname xtrabackup_info 2>/dev/null |  xargs grep $delDay | awk '{print $10}' | cut -d '=' -f2`; do rm -rf $i; done
-
-exit 0
