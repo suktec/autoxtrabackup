@@ -8,7 +8,7 @@
 backupDir=/ftp/backup/xtra
 hoursBeforeFull=240
 mysqlUser=root
-mysqlPwd=root
+mysqlPwd=dkamhXENkTHNDiTD
 compression=true
 compressThreads=4
 keepDays=11
@@ -81,7 +81,7 @@ fi
 
 # Check if you set a correct retention
 if [ $(($keepDays * 24)) -le $hoursBeforeFull ]; then
-        echo "ERROR: You have set hoursBeforeFull to $hoursBeforeFull and keepDays to $keepDays, this will delete all your backups... Change this"
+        echo "错误：你已将备份周期设置为 $hoursBeforeFull 小时并将保存天数设置为 $keepDays，这将删除所有备份...更改此设置"
         exit 1
 fi
 
@@ -109,7 +109,7 @@ fi
 
 # Check for an existing full backup
 if [ ! -f "$backupDir"/latest_full ]; then
-        #echo "Latest full backup information not found... taking a first full backup now"
+        #echo "没有找到最近的全量备份，开始创建全量备份"
         echo $dateNowUnix > "$backupDir"/latest_full
         lastFull=`cat "$backupDir"/latest_full`
         /usr/bin/innobackupex --user=$mysqlUser --password=$mysqlPwd --no-timestamp $compress $compressThreads --rsync "$backupDir"/"$dateNow"_full > $backupLog 2>&1
@@ -119,18 +119,20 @@ else
 
         # Check if we must take a full or incremental backup
         if [ $difference -lt $hoursBeforeFull ]; then
-                echo "自上次备份以来已经过去了 $difference 小时, 开始增量备份"
+                echo "自上次全量备份已过去 $difference 小时, 开始增量备份"
                 lastFullDir=`date -d@"$lastFull" '+%Y-%m-%d_%H-%M-%S'`
                 /usr/bin/innobackupex --user=$mysqlUser --password=$mysqlPwd --no-timestamp $compress $compressThreads --rsync --incremental --incremental-basedir="$backupDir"/"$lastFullDir"_full "$backupDir"/"$dateNow"_incr > $backupLog 2>&1
                 #删除超过时间的增量备份和日志
                 rm -rf $backupDir/$delDay*
+                echo "已删除 $delDay 的增量备份文件"
         else
-                echo "自上次完整备份以来已经过去了 $difference 小时，是时候进行新的完整备份了"
+                echo "自上次全量备份已超过 $difference 小时，开始进行全量备份"
                 echo $dateNowUnix > "$backupDir"/latest_full
                 /usr/bin/innobackupex --user=$mysqlUser --password=$mysqlPwd --no-timestamp $compress $compressThreads --rsync "$backupDir"/"$dateNow"_full > $backupLog 2>&1
 
                 #删除超过时间的备份和日志
-                find $backupDir -type f -ctime "+$keepFullDays" -ok rm {} \;
+                find $backupDir -maxdepth 1 -mtime "+$keepFullDays" -exec rm -rf {} +
+                echo "已删除 $keepFullDays 天前的备份文件"
         fi
 fi
 
@@ -147,4 +149,3 @@ else
         fi
         exit 1
 fi
-
